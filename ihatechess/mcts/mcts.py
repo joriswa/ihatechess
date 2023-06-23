@@ -1,4 +1,3 @@
-import random
 from typing import List, Tuple
 import numpy as np
 import onnxruntime as rt
@@ -7,8 +6,6 @@ from ihatechess.chess.utils import move_to_uci
 from ihatechess.model.converter import encode_board, encode_move
 import tensorflow as tf
 import threading
-import networkx as nx
-import matplotlib.pyplot as plt
 
 EPS = 1e-8  # small constant to avoid division by zero
 
@@ -91,6 +88,14 @@ class MCTS:
     ) -> float:
         path = []
 
+        # Play a game until a new state is encountered and compute the value either from the game state or by querying the network
+        value = self._explore(board, legal_moves, path)
+
+        # Backpropagate the value
+        self._backpropagate(path, value)
+
+    def _explore(self, board, legal_moves, path):
+
         while True:
             state = board.to_fen()
 
@@ -102,8 +107,6 @@ class MCTS:
 
             if state not in self.policy:
                 # If policy for the state is not known, query the network
-                # probs, value = self.network(np.expand_dims(encode_board(board), axis=0))
-                # probs, value = self.network(np.expand_dims(encode_board(board), axis=0))
                 input_data = np.expand_dims(encode_board(board), axis=0)
                 probs, value = self.inference.run(None, {self.input_name: input_data})
                 probs = tf.reshape(probs, (8, 8, 64))
@@ -126,7 +129,7 @@ class MCTS:
                 break
 
             # Select a move according to the UCB formula
-            move = self._select_action(state, legal_moves)
+            move = self._select_move(state, legal_moves)
             board.move_piece(*move)
             path.append((state, move_to_uci(move)))
 
@@ -137,9 +140,9 @@ class MCTS:
                     : self.progressive_widening_threshold
                 ]
 
-        # probs, value = self.network(np.expand_dims(encode_board(board), axis=0))
+        return value
 
-        # Backpropagate the value
+    def _backpropagate(self, path, value):
         for state, move in reversed(path):
             if (state, move) in self.moves:
                 # Update the Q-value for the move
@@ -152,7 +155,7 @@ class MCTS:
                 self.moves[(state, move)] = value
                 self.visit_counts[(state, move)] = 1
 
-    def _select_action(self, state, legal_moves):
+    def _select_move(self, state, legal_moves):
         """
         Selects an action (move) according to the Upper Confidence Bound formula.
         """
